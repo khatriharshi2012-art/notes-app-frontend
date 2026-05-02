@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim();
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "https://notes-app-backend-9riw.vercel.app";
 
 if (!API_BASE_URL) {
   console.error("❌ Missing VITE_API_BASE_URL");
@@ -8,8 +8,8 @@ const AUTH_CHANGE_EVENT = "authchange";
 
 export const buildApiUrl = (path) => {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${API_BASE_URL}${normalizedPath}`;
   console.log("API_BASE_URL:", API_BASE_URL);
+  return `${API_BASE_URL}${normalizedPath}`;
 };
 
 export const getAuthHeaders = () => {
