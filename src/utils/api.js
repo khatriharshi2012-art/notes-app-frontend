@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "https://notes-app-backend-9riw.vercel.app";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "/api";
 
 if (!API_BASE_URL) {
   console.error("❌ Missing VITE_API_BASE_URL");
