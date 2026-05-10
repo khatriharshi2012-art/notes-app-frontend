@@ -32,6 +32,7 @@ function Todo() {
   const [showModal, setShowModal] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [taskData, setTaskData] = useState(initialTaskData);
+  const [isSaving, setIsSaving] = useState(false);
   const [filter, setFilter] = useState(
     () => localStorage.getItem("filter") || "all",
   );
@@ -203,6 +204,10 @@ function Todo() {
   };
 
   const saveTask = async () => {
+    if (isSaving) {
+      return;
+    }
+
     if (!taskData.title.trim()) {
       showToast({
         title: "Title required",
@@ -225,6 +230,8 @@ function Todo() {
       : JSON.stringify(payload);
 
     try {
+      setIsSaving(true);
+
       const response = await fetch(buildApiUrl(endpoint), {
         method: "POST",
         headers: {
@@ -266,6 +273,8 @@ function Todo() {
         message: "Task changes could not be saved.",
         type: "error",
       });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -806,6 +815,7 @@ function Todo() {
                 type="button"
                 className="button button-secondary"
                 onClick={closeModal}
+                disabled={isSaving}
               >
                 Cancel
               </button>
@@ -813,8 +823,15 @@ function Todo() {
                 type="button"
                 className="button button-primary"
                 onClick={saveTask}
+                disabled={isSaving}
               >
-                {editingTask ? "Update task" : "Save task"}
+                {isSaving
+                  ? editingTask
+                    ? "Updating..."
+                    : "Saving..."
+                  : editingTask
+                    ? "Update task"
+                    : "Save task"}
               </button>
             </div>
           </div>

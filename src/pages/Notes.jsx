@@ -14,6 +14,7 @@ function Notes() {
   const [showModal, setShowModal] = useState(false);
   const [draftNote, setDraftNote] = useState(emptyNote);
   const [editNote, setEditNote] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [filter, setFilter] = useState(searchParams.get("filter") || "all");
   const hasFetchedRef = useRef(false);
   const search = searchParams.get("q") || "";
@@ -87,6 +88,10 @@ function Notes() {
   };
 
   const handleSaveNote = async () => {
+    if (isSaving) {
+      return;
+    }
+
     if (!activeNote.title.trim() || !activeNote.content.trim()) {
       showToast({
         title: "Missing note details",
@@ -111,6 +116,8 @@ function Notes() {
         };
 
     try {
+      setIsSaving(true);
+
       const response = await fetch(buildApiUrl(endpoint), {
         method: "POST",
         headers: {
@@ -152,6 +159,8 @@ function Notes() {
         message: "We could not save this note.",
         type: "error",
       });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -433,6 +442,7 @@ function Notes() {
                 type="button"
                 className="button button-secondary"
                 onClick={closeModal}
+                disabled={isSaving}
               >
                 Cancel
               </button>
@@ -440,8 +450,15 @@ function Notes() {
                 type="button"
                 className="button button-primary"
                 onClick={handleSaveNote}
+                disabled={isSaving}
               >
-                {editNote ? "Update note" : "Save note"}
+                {isSaving
+                  ? editNote
+                    ? "Updating..."
+                    : "Saving..."
+                  : editNote
+                    ? "Update note"
+                    : "Save note"}
               </button>
             </div>
           </div>
