@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import "../App.css";
+import { useFeedback } from "../hooks/useFeedback";
 import { buildApiUrl, getAuthHeaders, readJsonResponse } from "../utils/api";
 
 const categories = [
-  { value: "all", label: "All Tasks", icon: "List" },
+  { value: "all", label: "All Tasks", icon: "All" },
   { value: "work", label: "Work", icon: "Work" },
   { value: "study", label: "Study", icon: "Study" },
   { value: "personal", label: "Personal", icon: "Personal" },
@@ -23,38 +25,21 @@ const initialTaskData = {
 };
 
 function Todo() {
-  const [tasks, setTasks] = useState(null);
+  const { showToast, confirm } = useFeedback();
+  const [searchParams] = useSearchParams();
+  const [tasks, setTasks] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [taskData, setTaskData] = useState(initialTaskData);
-  const [filter, setFilter] = useState(() => {
-    return localStorage.getItem("filter") || "all";
-  });
-
-  const [categoryFilter, setCategoryFilter] = useState(() => {
-    return localStorage.getItem("categoryFilter") || "all";
-  });
-  const [search, setSearch] = useState("");
-  const [toast, setToast] = useState(null);
-  const [pendingDeleteId, setPendingDeleteId] = useState(null);
+  const [filter, setFilter] = useState(
+    () => localStorage.getItem("filter") || "all",
+  );
+  const [categoryFilter, setCategoryFilter] = useState(
+    () => localStorage.getItem("categoryFilter") || "all",
+  );
   const hasFetchedRef = useRef(false);
-
-  const showToast = (message, type = "info") => {
-    setToast({ message, type });
-  };
-
-  useEffect(() => {
-    if (!toast) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      setToast(null);
-    }, 2500);
-
-    return () => clearTimeout(timer);
-  }, [toast]);
+  const search = searchParams.get("q") || "";
 
   useEffect(() => {
     localStorage.setItem("filter", filter);
@@ -64,11 +49,19 @@ function Todo() {
     localStorage.setItem("categoryFilter", categoryFilter);
   }, [categoryFilter]);
 
-  const getTasks = async () => {
+  useEffect(() => {
+    document.body.classList.toggle("modal-open", showModal);
+
+    return () => {
+      document.body.classList.remove("modal-open");
+    };
+  }, [showModal]);
+
+  const getTasks = useCallback(async () => {
     setIsLoading(true);
 
     try {
-      const res = await fetch(buildApiUrl("/todo/get-todo"), {
+      const response = await fetch(buildApiUrl("/todo/get-todo"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -76,10 +69,14 @@ function Todo() {
         },
       });
 
-      const data = await readJsonResponse(res);
+      const data = await readJsonResponse(response);
 
-      if (!res.ok) {
-        showToast(data?.message || "Error loading tasks", "error");
+      if (!response.ok) {
+        showToast({
+          title: "Could not load tasks",
+          message: data?.message || "Please try again shortly.",
+          type: "error",
+        });
         setTasks([]);
         return;
       }
@@ -88,11 +85,15 @@ function Todo() {
     } catch (error) {
       console.error(error);
       setTasks([]);
-      showToast("Error loading tasks", "error");
+      showToast({
+        title: "Request failed",
+        message: "Tasks could not be loaded.",
+        type: "error",
+      });
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [showToast]);
 
   useEffect(() => {
     if (hasFetchedRef.current) {
@@ -101,10 +102,10 @@ function Todo() {
 
     hasFetchedRef.current = true;
     getTasks();
-  }, []);
+  }, [getTasks]);
 
   useEffect(() => {
-    if (!tasks?.length) {
+    if (!tasks.length) {
       return;
     }
 
@@ -117,6 +118,7 @@ function Todo() {
         }
 
         const reminderSource = task.reminder || task.dueDate;
+
         if (!reminderSource) {
           return;
         }
@@ -125,42 +127,37 @@ function Todo() {
         const diff = reminderTime - now;
 
         if (diff > 0 && diff <= 60000) {
-          showReminder(task, reminderSource);
+          const reminderKey = `reminder-${task._id}-${reminderTime}`;
+
+          if (sessionStorage.getItem(reminderKey)) {
+            return;
+          }
+
+          sessionStorage.setItem(reminderKey, "true");
+
+          if ("Notification" in window) {
+            if (Notification.permission === "granted") {
+              new Notification("Task Reminder", { body: task.title });
+            } else if (Notification.permission !== "denied") {
+              Notification.requestPermission().then((permission) => {
+                if (permission === "granted") {
+                  new Notification("Task Reminder", { body: task.title });
+                }
+              });
+            }
+          }
+
+          showToast({
+            title: "Task reminder",
+            message: task.title,
+            type: "info",
+          });
         }
       });
     }, 15000);
 
     return () => clearInterval(interval);
-  }, [tasks]);
-
-  const showReminder = (task, reminderSource) => {
-    const reminderKey = `reminder-${task._id}-${new Date(reminderSource).getTime()}`;
-    const shown = sessionStorage.getItem(reminderKey);
-
-    if (shown) {
-      return;
-    }
-
-    sessionStorage.setItem(reminderKey, "true");
-
-    if ("Notification" in window) {
-      if (Notification.permission === "granted") {
-        new Notification("Task Reminder", {
-          body: task.title,
-        });
-      } else if (Notification.permission !== "denied") {
-        Notification.requestPermission().then((permission) => {
-          if (permission === "granted") {
-            new Notification("Task Reminder", {
-              body: task.title,
-            });
-          }
-        });
-      }
-    }
-
-    showToast(`Reminder: ${task.title}`, "info");
-  };
+  }, [showToast, tasks]);
 
   const openCreateModal = () => {
     setEditingTask(null);
@@ -207,7 +204,11 @@ function Todo() {
 
   const saveTask = async () => {
     if (!taskData.title.trim()) {
-      showToast("Title is required", "error");
+      showToast({
+        title: "Title required",
+        message: "Add a task title before saving.",
+        type: "error",
+      });
       return;
     }
 
@@ -218,13 +219,13 @@ function Todo() {
       subtasks: taskData.subtasks.filter((subtask) => subtask.text.trim()),
     };
 
-    const url = editingTask ? "/todo/update-todo" : "/todo/create-todo";
+    const endpoint = editingTask ? "/todo/update-todo" : "/todo/create-todo";
     const body = editingTask
       ? JSON.stringify({ id: editingTask._id, ...payload })
       : JSON.stringify(payload);
 
     try {
-      const res = await fetch(buildApiUrl(url), {
+      const response = await fetch(buildApiUrl(endpoint), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -233,10 +234,14 @@ function Todo() {
         body,
       });
 
-      const data = await readJsonResponse(res);
+      const data = await readJsonResponse(response);
 
-      if (!res.ok) {
-        showToast(data?.message || "Error saving task", "error");
+      if (!response.ok) {
+        showToast({
+          title: "Save failed",
+          message: data?.message || "Task changes could not be saved.",
+          type: "error",
+        });
         return;
       }
 
@@ -244,22 +249,41 @@ function Todo() {
         setTasks((prev) =>
           prev.map((item) => (item._id === editingTask._id ? data.data : item)),
         );
-        showToast("Task updated", "success");
       } else {
         setTasks((prev) => [data.data, ...prev]);
-        showToast("Task created", "success");
       }
 
+      showToast({
+        title: editingTask ? "Task updated" : "Task created",
+        message: "Your task list is up to date.",
+        type: "success",
+      });
       closeModal();
     } catch (error) {
       console.error(error);
-      showToast("Error saving task", "error");
+      showToast({
+        title: "Request failed",
+        message: "Task changes could not be saved.",
+        type: "error",
+      });
     }
   };
 
   const deleteTask = async (id) => {
+    const shouldDelete = await confirm({
+      title: "Delete this task?",
+      message: "This task and its subtasks will be removed.",
+      confirmLabel: "Delete task",
+      cancelLabel: "Keep task",
+      tone: "danger",
+    });
+
+    if (!shouldDelete) {
+      return;
+    }
+
     try {
-      const res = await fetch(buildApiUrl("/todo/delete-todo"), {
+      const response = await fetch(buildApiUrl("/todo/delete-todo"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -268,25 +292,36 @@ function Todo() {
         body: JSON.stringify({ id }),
       });
 
-      const data = await readJsonResponse(res);
+      const data = await readJsonResponse(response);
 
-      if (!res.ok) {
-        showToast(data?.message || "Failed to delete task", "error");
+      if (!response.ok) {
+        showToast({
+          title: "Delete failed",
+          message: data?.message || "Task could not be removed.",
+          type: "error",
+        });
         return;
       }
 
       setTasks((prev) => prev.filter((task) => task._id !== id));
-      setPendingDeleteId(null);
-      showToast("Task deleted", "success");
+      showToast({
+        title: "Task deleted",
+        message: "The task has been removed.",
+        type: "success",
+      });
     } catch (error) {
       console.error(error);
-      showToast("Error deleting task", "error");
+      showToast({
+        title: "Request failed",
+        message: "Task could not be removed.",
+        type: "error",
+      });
     }
   };
 
-  const toggleComplete = async (task) => {
+  const updateTask = async (task, fields, successMessage) => {
     try {
-      const res = await fetch(buildApiUrl("/todo/update-todo"), {
+      const response = await fetch(buildApiUrl("/todo/update-todo"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -294,98 +329,38 @@ function Todo() {
         },
         body: JSON.stringify({
           id: task._id,
-          isCompleted: !task.isCompleted,
+          ...fields,
         }),
       });
 
-      const data = await readJsonResponse(res);
+      const data = await readJsonResponse(response);
 
-      if (!res.ok) {
-        showToast(data?.message || "Failed to update task", "error");
+      if (!response.ok) {
+        showToast({
+          title: "Update failed",
+          message: data?.message || "The task could not be updated.",
+          type: "error",
+        });
         return;
       }
 
       setTasks((prev) =>
         prev.map((item) => (item._id === task._id ? data.data : item)),
       );
-    } catch (error) {
-      console.error(error);
-      showToast("Error updating task", "error");
-    }
-  };
 
-  const toggleImportant = async (task) => {
-    try {
-      const res = await fetch(buildApiUrl("/todo/update-todo"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeaders(),
-        },
-        body: JSON.stringify({
-          id: task._id,
-          isImportant: !task.isImportant,
-        }),
-      });
-
-      const data = await readJsonResponse(res);
-
-      if (!res.ok) {
-        showToast(
-          data?.message || "Failed to update important status",
-          "error",
-        );
-        return;
+      if (successMessage) {
+        showToast({
+          title: successMessage,
+          type: "success",
+        });
       }
-
-      setTasks((prev) =>
-        prev.map((item) => (item._id === task._id ? data.data : item)),
-      );
-      showToast(
-        data.data?.isImportant
-          ? "Marked as important"
-          : "Removed from important",
-        "success",
-      );
     } catch (error) {
       console.error(error);
-      showToast("Error updating important status", "error");
-    }
-  };
-
-  const toggleSubtask = async (task, index) => {
-    try {
-      const updatedSubtasks = [...(task.subtasks || [])];
-      updatedSubtasks[index] = {
-        ...updatedSubtasks[index],
-        done: !updatedSubtasks[index].done,
-      };
-
-      const res = await fetch(buildApiUrl("/todo/update-todo"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeaders(),
-        },
-        body: JSON.stringify({
-          id: task._id,
-          subtasks: updatedSubtasks,
-        }),
+      showToast({
+        title: "Request failed",
+        message: "The task could not be updated.",
+        type: "error",
       });
-
-      const data = await readJsonResponse(res);
-
-      if (!res.ok) {
-        showToast(data?.message || "Failed to update subtask", "error");
-        return;
-      }
-
-      setTasks((prev) =>
-        prev.map((item) => (item._id === task._id ? data.data : item)),
-      );
-    } catch (error) {
-      console.error(error);
-      showToast("Error updating subtask", "error");
     }
   };
 
@@ -393,7 +368,7 @@ function Todo() {
     const today = new Date().toDateString();
     const query = search.trim().toLowerCase();
 
-    return (tasks || []).filter((task) => {
+    return tasks.filter((task) => {
       const matchesFilter =
         filter === "all" ||
         (filter === "today" &&
@@ -419,31 +394,33 @@ function Todo() {
 
   const getCategoryCount = (category) => {
     if (category === "all") {
-      return tasks?.length || 0;
+      return tasks.length;
     }
 
-    return (tasks || []).filter((task) => task.category === category).length;
+    return tasks.filter((task) => task.category === category).length;
   };
 
-  if (isLoading) {
-    return (
-      <div className="todo-page">
-        <div className="todo-header">
-          <div className="todo-header-copy">
-            <h1>Tasks</h1>
-            <p className="sub-text">Organize your work like a pro</p>
+  return (
+    <section className="page-shell">
+      <div className="page-color">
+        <div className="page-header">
+          <div>
+            <span className="page-kicker">Task planner</span>
+            <h1>Stay on top of work without clutter.</h1>
+            <p>
+              Track priorities, reminders, and categories in a layout tuned for
+              every screen size.
+            </p>
           </div>
 
-          <div className="todo-header-actions">
-            <input
-              className="todo-search"
-              placeholder="Search tasks..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-
-            <button className="primary-btn" onClick={openCreateModal}>
-              Add Task
+          <div className="page-actions">
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={openCreateModal}
+            >
+              <i className="fa-solid fa-plus" />
+              <span>Add task</span>
             </button>
           </div>
         </div>
@@ -452,6 +429,7 @@ function Todo() {
           {["all", "today", "upcoming", "important"].map((tab) => (
             <button
               key={tab}
+              type="button"
               className={filter === tab ? "active" : ""}
               onClick={() => setFilter(tab)}
             >
@@ -459,74 +437,27 @@ function Todo() {
             </button>
           ))}
         </div>
-
-        <div className="task-sidebar">
-          <h3>Categories</h3>
-
-          <div className="category-grid">
-            {categories.map((category) => (
-              <button
-                key={category.value}
-                type="button"
-                className={`cat-item ${categoryFilter === category.value ? "active" : ""}`}
-                onClick={() => setCategoryFilter(category.value)}
-              >
-                <span className="cat-icon">{category.icon}</span>
-                <span className="cat-label">{category.label}</span>
-                <span className="count">
-                  {getCategoryCount(category.value)}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="task-list">
-          <div className="empty-state">
-            <h3>Loading tasks...</h3>
-            <p>Please wait a moment</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="todo-page">
-      <div className="todo-header">
-        <div className="todo-header-copy">
-          <h1>Tasks</h1>
-          <p className="sub-text">Organize your work like a pro</p>
-        </div>
-
-        <div className="todo-header-actions">
-          <input
-            className="todo-search"
-            placeholder="Search tasks..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-
-          <button className="primary-btn" onClick={openCreateModal}>
-            <i class="fa-solid fa-plus"></i> Add Task
-          </button>
-        </div>
-      </div>
-
-      <div className="task-tabs">
-        {["all", "today", "upcoming", "important"].map((tab) => (
-          <button
-            key={tab}
-            className={filter === tab ? "active" : ""}
-            onClick={() => setFilter(tab)}
-          >
-            {tab}
-          </button>
-        ))}
       </div>
 
       <div className="task-sidebar">
-        <h3>Categories</h3>
+        <div className="section-header">
+          <h3>Categories</h3>
+          <p>Narrow the list fast</p>
+        </div>
+
+        <label className="field-group category-dropdown">
+          <span>Choose category</span>
+          <select
+            value={categoryFilter}
+            onChange={(event) => setCategoryFilter(event.target.value)}
+          >
+            {categories.map((category) => (
+              <option key={category.value} value={category.value}>
+                {category.label} ({getCategoryCount(category.value)})
+              </option>
+            ))}
+          </select>
+        </label>
 
         <div className="category-grid">
           {categories.map((category) => (
@@ -544,23 +475,37 @@ function Todo() {
         </div>
       </div>
 
-      <div className="task-list">
-        {filteredTasks.length === 0 ? (
-          <div className="empty-state">
-            <h3>No tasks here</h3>
-            <p>Create your first task to get started</p>
-          </div>
-        ) : (
-          filteredTasks.map((task) => (
-            <div className="task-card" key={task._id}>
+      {isLoading ? (
+        <div className="empty-panel">
+          <h3>Loading tasks...</h3>
+          <p>Your planner is being prepared.</p>
+        </div>
+      ) : filteredTasks.length === 0 ? (
+        <div className="empty-panel">
+          <h3>No tasks here yet</h3>
+          <p>Create a task or change the filters to see more results.</p>
+        </div>
+      ) : (
+        <div className="task-list">
+          {filteredTasks.map((task) => (
+            <article className="task-card" key={task._id}>
               <div className="task-left">
-                <input
-                  type="checkbox"
-                  checked={Boolean(task.isCompleted)}
-                  onChange={() => toggleComplete(task)}
-                />
+                <label className="checkbox-pill">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(task.isCompleted)}
+                    onChange={() =>
+                      updateTask(
+                        task,
+                        { isCompleted: !task.isCompleted },
+                        "Task status updated",
+                      )
+                    }
+                  />
+                  <span />
+                </label>
 
-                <div>
+                <div className="task-body">
                   <div className="task-top-row">
                     <button
                       type="button"
@@ -576,133 +521,181 @@ function Todo() {
                       {task.category || "general"}
                     </span>
 
-                    {task.reminder && (
+                    {task.reminder ? (
                       <span
                         className="reminder-pill"
                         title={new Date(task.reminder).toLocaleString()}
                       >
-                        <i className="fa-solid fa-bell"></i>
+                        <i className="fa-solid fa-bell" />
                       </span>
-                    )}
+                    ) : null}
                   </div>
 
-                  {task.description && <p>{task.description}</p>}
+                  {task.description ? <p>{task.description}</p> : null}
 
-                  {task.subtasks?.length > 0 && (
+                  {task.subtasks?.length ? (
                     <div className="subtask-list">
                       {task.subtasks.map((subtask, index) => (
-                        <div
+                        <label
                           key={`${task._id}-${index}`}
                           className="subtask-item"
                         >
                           <input
                             type="checkbox"
                             checked={Boolean(subtask.done)}
-                            onChange={() => toggleSubtask(task, index)}
+                            onChange={() => {
+                              const updatedSubtasks = [...task.subtasks];
+                              updatedSubtasks[index] = {
+                                ...updatedSubtasks[index],
+                                done: !updatedSubtasks[index].done,
+                              };
+                              updateTask(task, { subtasks: updatedSubtasks });
+                            }}
                           />
                           <span className={subtask.done ? "completed" : ""}>
                             {subtask.text}
                           </span>
-                        </div>
+                        </label>
                       ))}
                     </div>
-                  )}
+                  ) : null}
 
                   <div className="task-meta">
-                    {task.dueDate && (
+                    {task.dueDate ? (
                       <small>
-                        Due: {new Date(task.dueDate).toLocaleDateString()}
+                        Due {new Date(task.dueDate).toLocaleDateString()}
                       </small>
-                    )}
-                    {task.reminder && (
+                    ) : null}
+                    {task.reminder ? (
                       <small>
-                        Reminder: {new Date(task.reminder).toLocaleString()}
+                        Reminder {new Date(task.reminder).toLocaleString()}
                       </small>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>
 
               <div className="task-right">
-                <button type="button" onClick={() => toggleImportant(task)}>
-                  {task.isImportant ? (
-                    <i class="fa-solid fa-star"></i>
-                  ) : (
-                    <i class="fa-regular fa-star"></i>
-                  )}
+                <button
+                  type="button"
+                  className={`icon-button ${task.isImportant ? "is-active" : ""}`}
+                  onClick={() =>
+                    updateTask(
+                      task,
+                      { isImportant: !task.isImportant },
+                      task.isImportant
+                        ? "Removed from important"
+                        : "Marked as important",
+                    )
+                  }
+                  aria-label="Toggle important"
+                >
+                  <i
+                    className={`${task.isImportant ? "fa-solid" : "fa-regular"} fa-star`}
+                  />
                 </button>
 
-                <span className={`priority ${task.priority}`}>
+                <span className={`priority priority-${task.priority}`}>
                   {task.priority}
                 </span>
 
                 <button
                   type="button"
-                  onClick={() => setPendingDeleteId(task._id)}
+                  className="icon-button danger"
+                  onClick={() => deleteTask(task._id)}
+                  aria-label="Delete task"
                 >
-                  <i class="fa-solid fa-trash"></i>
+                  <i className="fa-solid fa-trash" />
                 </button>
               </div>
-            </div>
-          ))
-        )}
-      </div>
+            </article>
+          ))}
+        </div>
+      )}
 
-      {showModal && (
-        <div className="modal-overlay">
-          <div className="modern-modal">
-            {/* HEADER */}
+      {showModal ? (
+        <div className="overlay-shell" role="presentation">
+          <div
+            className="modal-card modal-card-wide"
+            role="dialog"
+            aria-modal="true"
+          >
             <div className="modal-header">
-              <h2>{editingTask ? "Update Task" : "New Task"}</h2>
-              <button className="close-btn" onClick={closeModal}>
-                ✖
+              <div>
+                <span className="page-kicker">
+                  {editingTask ? "Edit task" : "New task"}
+                </span>
+                <h2>
+                  {editingTask ? "Update task details" : "Plan the next task"}
+                </h2>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={closeModal}
+                aria-label="Close task modal"
+              >
+                <i className="fa-solid fa-xmark" />
               </button>
             </div>
 
-            {/* BODY */}
             <div className="modal-body">
-              {/* TITLE */}
-              <input
-                className="input-title"
-                placeholder="Task title..."
-                value={taskData.title}
-                onChange={(e) =>
-                  setTaskData({ ...taskData, title: e.target.value })
-                }
-              />
+              <label className="field-group task-modal-field task-modal-field-title">
+                <span>Title</span>
+                <input
+                  className="task-modal-input"
+                  placeholder="Task title"
+                  value={taskData.title}
+                  onChange={(event) =>
+                    setTaskData({ ...taskData, title: event.target.value })
+                  }
+                />
+              </label>
 
-              {/* DESCRIPTION */}
-              <textarea
-                className="input-desc"
-                placeholder="Add description..."
-                value={taskData.description}
-                onChange={(e) =>
-                  setTaskData({ ...taskData, description: e.target.value })
-                }
-              />
+              <label className="field-group task-modal-field">
+                <span>Description</span>
+                <textarea
+                  className="input-desc task-modal-input"
+                  placeholder="Add a helpful description"
+                  value={taskData.description}
+                  onChange={(event) =>
+                    setTaskData({
+                      ...taskData,
+                      description: event.target.value,
+                    })
+                  }
+                />
+              </label>
 
-              {/* SUBTASKS */}
-              <div className="subtasks-box">
-                <h4>Subtasks</h4>
+              <div className="subtasks-box task-modal-section">
+                <div className="section-header">
+                  <h4>Subtasks</h4>
+                  <p>Break work into smaller steps</p>
+                </div>
 
-                {taskData.subtasks.map((sub, i) => (
-                  <div key={i} className="subtask-item">
+                {taskData.subtasks.map((subtask, index) => (
+                  <div
+                    key={`${subtask.text}-${index}`}
+                    className="subtask-editor"
+                  >
                     <input
                       type="text"
-                      placeholder="Subtask..."
-                      value={sub.text}
-                      onChange={(e) => {
+                      className="task-modal-input"
+                      placeholder="Subtask"
+                      value={subtask.text}
+                      onChange={(event) => {
                         const updated = [...taskData.subtasks];
-                        updated[i].text = e.target.value;
+                        updated[index].text = event.target.value;
                         setTaskData({ ...taskData, subtasks: updated });
                       }}
                     />
 
                     <button
-                      className="remove-btn"
+                      type="button"
+                      className="icon-button danger"
                       onClick={() => {
                         const updated = taskData.subtasks.filter(
-                          (_, index) => index !== i,
+                          (_, idx) => idx !== index,
                         );
                         setTaskData({
                           ...taskData,
@@ -711,14 +704,16 @@ function Todo() {
                             : [{ text: "", done: false }],
                         });
                       }}
+                      aria-label="Remove subtask"
                     >
-                      ✖
+                      <i className="fa-solid fa-trash" />
                     </button>
                   </div>
                 ))}
 
                 <button
-                  className="add-subtask"
+                  type="button"
+                  className="button button-ghost"
                   onClick={() =>
                     setTaskData({
                       ...taskData,
@@ -729,40 +724,52 @@ function Todo() {
                     })
                   }
                 >
-                  + Add Subtask
+                  <i className="fa-solid fa-plus" />
+                  <span>Add subtask</span>
                 </button>
               </div>
 
-              {/* META ROW */}
-              <div className="meta-row">
-                <div className="field-group">
-                  <label>Due Date</label>
+              <div className="meta-grid task-modal-meta-grid">
+                <label className="field-group task-modal-card">
+                  <span className="task-modal-label">
+                    <i className="fa-regular fa-calendar" />
+                    Due date
+                  </span>
                   <input
+                    className="task-modal-input"
                     type="date"
                     value={taskData.dueDate}
-                    onChange={(e) =>
-                      setTaskData({ ...taskData, dueDate: e.target.value })
+                    onChange={(event) =>
+                      setTaskData({ ...taskData, dueDate: event.target.value })
                     }
                   />
-                </div>
+                </label>
 
-                <div className="field-group">
-                  <label>Reminder</label>
+                <label className="field-group task-modal-card">
+                  <span className="task-modal-label">
+                    <i className="fa-regular fa-bell" />
+                    Reminder
+                  </span>
                   <input
+                    className="task-modal-input"
                     type="datetime-local"
                     value={taskData.reminder}
-                    onChange={(e) =>
-                      setTaskData({ ...taskData, reminder: e.target.value })
+                    onChange={(event) =>
+                      setTaskData({ ...taskData, reminder: event.target.value })
                     }
                   />
-                </div>
+                </label>
 
-                <div className="field-group">
-                  <label>Categories</label>
+                <label className="field-group task-modal-card">
+                  <span className="task-modal-label">
+                    <i className="fa-solid fa-layer-group" />
+                    Category
+                  </span>
                   <select
+                    className="task-modal-input"
                     value={taskData.category}
-                    onChange={(e) =>
-                      setTaskData({ ...taskData, category: e.target.value })
+                    onChange={(event) =>
+                      setTaskData({ ...taskData, category: event.target.value })
                     }
                   >
                     <option value="general">General</option>
@@ -770,55 +777,50 @@ function Todo() {
                     <option value="study">Study</option>
                     <option value="personal">Personal</option>
                   </select>
+                </label>
+              </div>
+
+              <div className="task-modal-section">
+                <div className="section-header">
+                  <h4>Priority</h4>
+                  <p>Choose how urgent this task feels</p>
+                </div>
+
+                <div className="priority-modern task-modal-priority">
+                  {["low", "medium", "high"].map((priority) => (
+                    <button
+                      key={priority}
+                      type="button"
+                      className={`priority-pill ${priority} ${taskData.priority === priority ? "active" : ""}`}
+                      onClick={() => setTaskData({ ...taskData, priority })}
+                    >
+                      {priority}
+                    </button>
+                  ))}
                 </div>
               </div>
-
-              {/* PRIORITY */}
-              <div className="priority-modern">
-                {["low", "medium", "high"].map((p) => (
-                  <span
-                    key={p}
-                    className={`priority-pill ${p} ${taskData.priority === p ? "active" : ""}`}
-                    onClick={() => setTaskData({ ...taskData, priority: p })}
-                  >
-                    {p}
-                  </span>
-                ))}
-              </div>
             </div>
 
-            {/* FOOTER */}
             <div className="modal-footer">
-              <button className="btn-secondary" onClick={closeModal}>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={closeModal}
+              >
                 Cancel
               </button>
-              <button className="btn-primary" onClick={saveTask}>
-                {editingTask ? "Update" : "Save"}
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={saveTask}
+              >
+                {editingTask ? "Update task" : "Save task"}
               </button>
             </div>
           </div>
         </div>
-      )}
-
-      {pendingDeleteId && (
-        <div className="modal">
-          <div className="confirm-box">
-            <h3>Delete task?</h3>
-            <p>This action cannot be undone.</p>
-            <div className="modal-actions">
-              <button onClick={() => deleteTask(pendingDeleteId)}>
-                Delete
-              </button>
-              <button onClick={() => setPendingDeleteId(null)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {toast && (
-        <div className={`toast toast-${toast.type}`}>{toast.message}</div>
-      )}
-    </div>
+      ) : null}
+    </section>
   );
 }
 

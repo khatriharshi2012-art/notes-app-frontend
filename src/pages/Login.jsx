@@ -1,25 +1,34 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import "../App.css";
+import { useFeedback } from "../hooks/useFeedback";
 import { buildApiUrl, readJsonResponse, setAuthSession } from "../utils/api";
 
 function Login() {
   const navigate = useNavigate();
+  const { showToast } = useFeedback();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
+  const handleLogin = async (event) => {
+    event.preventDefault();
 
     if (!email || !password) {
-      alert("All fields are required");
+      showToast({
+        title: "Missing details",
+        message: "Please enter both email and password.",
+        type: "error",
+      });
       return;
     }
 
+    setIsSubmitting(true);
+
     try {
-      const res = await fetch(buildApiUrl("/user/login"), {
+      const response = await fetch(buildApiUrl("/user/login"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -27,67 +36,95 @@ function Login() {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await readJsonResponse(res);
+      const data = await readJsonResponse(response);
       const user = data?.data?.user;
       const accessToken = data?.data?.accessToken;
 
-      if (!res.ok) {
-        alert(data.message || "Login failed");
+      if (!response.ok) {
+        showToast({
+          title: "Login failed",
+          message: data?.message || "Please check your credentials and try again.",
+          type: "error",
+        });
         return;
       }
 
       if (!user || !accessToken) {
-        alert("Invalid login response from server");
+        showToast({
+          title: "Unexpected response",
+          message: "The server did not return a valid session.",
+          type: "error",
+        });
         return;
       }
 
       setAuthSession({ token: accessToken, user });
+      showToast({
+        title: `Welcome back, ${user.name || "there"}`,
+        message: "You are now signed in.",
+        type: "success",
+      });
       navigate("/home", { replace: true });
-    } catch (err) {
-      console.error(err);
-      alert("Something went wrong");
+    } catch (error) {
+      console.error(error);
+      showToast({
+        title: "Something went wrong",
+        message: "We could not reach the server right now.",
+        type: "error",
+      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="login-div">
-      <form onSubmit={handleLogin}>
-        <h2>Login</h2>
-
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-
-        <div className="password-field">
-          <input
-            type={showPassword ? "text" : "password"}
-            placeholder="Enter password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-
-          <span
-            className="eye-icon"
-            onClick={() => setShowPassword(!showPassword)}
-          >
-            {showPassword ? (
-              <i className="fa-solid fa-eye-slash"></i>
-            ) : (
-              <i className="fa-solid fa-eye"></i>
-            )}
-          </span>
+    <section className="auth-shell">
+      <div className="auth-card">
+        <div className="auth-copy">
+          <span className="landing-badge">Login</span>
         </div>
 
-        <button type="submit">Login</button>
-      </form>
+        <form className="auth-form" onSubmit={handleLogin}>
+          <label className="field-group">
+            <span>Email</span>
+            <input
+              type="email"
+              placeholder="name@example.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+          </label>
 
-      <p>
-        Don&apos;t have an account? <Link to="/register">Sign up</Link>
-      </p>
-    </div>
+          <label className="field-group">
+            <span>Password</span>
+            <div className="password-field">
+              <input
+                type={showPassword ? "text" : "password"}
+                placeholder="Enter your password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <button
+                type="button"
+                className="password-toggle"
+                onClick={() => setShowPassword((prev) => !prev)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                <i className={`fa-solid ${showPassword ? "fa-eye-slash" : "fa-eye"}`} />
+              </button>
+            </div>
+          </label>
+
+          <button type="submit" className="button button-primary button-block" disabled={isSubmitting}>
+            {isSubmitting ? "Signing in..." : "Login"}
+          </button>
+        </form>
+
+        <p className="auth-footnote">
+          Don&apos;t have an account? <Link to="/register">Create one</Link>
+        </p>
+      </div>
+    </section>
   );
 }
 

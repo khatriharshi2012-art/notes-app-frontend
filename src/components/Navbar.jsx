@@ -1,23 +1,29 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import "../App.css";
 import {
   addAuthChangeListener,
   clearAuthSession,
   getStoredUser,
 } from "../utils/api";
+import { useFeedback } from "../hooks/useFeedback";
 
 function Navbar() {
-  const navigate = useNavigate();
   const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { showToast } = useFeedback();
 
   const [user, setUser] = useState(null);
   const [showDropdown, setShowDropdown] = useState(false);
-  const [theme, setTheme] = useState(
-    localStorage.getItem("theme") || "light",
-  );
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === "undefined") {
+      return "light";
+    }
 
-  const dropdownRef = useRef();
+    return localStorage.getItem("theme") || "light";
+  });
+  const dropdownRef = useRef(null);
 
   useEffect(() => {
     const syncUser = () => {
@@ -25,14 +31,12 @@ function Navbar() {
     };
 
     syncUser();
-
     return addAuthChangeListener(syncUser);
   }, []);
 
-  // ✅ Close dropdown when clicking outside
   useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setShowDropdown(false);
       }
     };
@@ -43,87 +47,157 @@ function Navbar() {
 
   useEffect(() => {
     document.body.classList.toggle("dark-theme", theme === "dark");
+    document.documentElement.classList.toggle("dark-theme", theme === "dark");
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  const logout = () => {
+  const visitRoute = (path) => {
+    navigate(path);
+  };
+
+  const handleLogout = () => {
     clearAuthSession();
     setUser(null);
     setShowDropdown(false);
-    navigate("/", { replace: true });
+    showToast({
+      title: "Signed out",
+      message: "Your session has been cleared safely.",
+      type: "info",
+    });
+    navigate("/");
   };
 
-  const getInitial = () => {
-    return user?.name ? user.name.charAt(0).toUpperCase() : "U";
+  const getInitial = () =>
+    user?.name ? user.name.charAt(0).toUpperCase() : "U";
+
+  const canSearchWorkspace =
+    user && ["/home", "/tasks"].includes(location.pathname);
+  const searchValue = canSearchWorkspace ? searchParams.get("q") || "" : "";
+
+  const handleWorkspaceSearch = (value) => {
+    const nextParams = new URLSearchParams(searchParams);
+
+    if (value.trim()) {
+      nextParams.set("q", value);
+    } else {
+      nextParams.delete("q");
+    }
+
+    setSearchParams(nextParams);
   };
 
   return (
-    <div className="navbar">
-      <div className="navbar-inner">
-        {/* LOGO */}
-        <h1 className="logo" onClick={() => navigate("/")}>
-          📝 NoteNest
-        </h1>
+    <header className="top-nav">
+      <div className="top-nav-inner">
+        <button
+          type="button"
+          className="brand-lockup"
+          onClick={() => visitRoute("/")}
+        >
+          <span className="brand-mark">N</span>
+          <span className="brand-copy">
+            <strong>NoteNest</strong>
+            <small>Focused workspace</small>
+          </span>
+        </button>
 
-        {/* ACTIONS */}
-        <div className="nav-actions">
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          >
-            {theme === "dark" ? "Light" : "Dark"}
-          </button>
+        {canSearchWorkspace ? (
+          <label className="search-field nav-search-field">
+            <input
+              placeholder={
+                location.pathname === "/home"
+                  ? "Search notes..."
+                  : "Search tasks..."
+              }
+              value={searchValue}
+              onChange={(event) => handleWorkspaceSearch(event.target.value)}
+            />
+            <i className="fa-solid fa-magnifying-glass" />
+          </label>
+        ) : null}
 
+        <div className="nav-controls">
           {user ? (
             <div className="profile-wrapper" ref={dropdownRef}>
-              <div
-                className="profile"
-                onClick={() => setShowDropdown(!showDropdown)}
+              <button
+                type="button"
+                className="profile-trigger"
+                onClick={() => setShowDropdown((prev) => !prev)}
               >
-                <div className="avatar">{getInitial()}</div>
+                <span className="avatar">{getInitial()}</span>
+                <span className="profile-copy">
+                  <strong>{user?.name}</strong>
+                  <small>Account</small>
+                </span>
+                <i className="fa-solid fa-chevron-down" />
+              </button>
 
-                <p className="p-tag">{user?.name}</p>
-              </div>
-
-              {showDropdown && (
-                <div className="dropdown">
-                  <div className="dropdown-header">
-                    <div className="avatar big">{getInitial()}</div>
-                    <div>
-                      <p className="dropdown-name">{user?.name}</p>
-                      <p className="dropdown-email">{user?.email}</p>
-                    </div>
+              {showDropdown ? (
+                <div className="profile-menu">
+                  <div className="profile-menu-head">
+                    <strong>{user?.name}</strong>
+                    <small>{user?.email}</small>
                   </div>
-
-                  <hr />
-
-                  <button onClick={() => navigate("/home")}>Dashboard</button>
-
-                  <button onClick={logout}>Logout</button>
+                  <button type="button" onClick={() => navigate("/home")}>
+                    <i className="fa-regular fa-note-sticky" />
+                    <span>Open notes</span>
+                  </button>
+                  <button type="button" onClick={() => navigate("/tasks")}>
+                    <i className="fa-solid fa-list-check" />
+                    <span>Open tasks</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setTheme(theme === "dark" ? "light" : "dark")
+                    }
+                    aria-label={
+                      theme === "dark"
+                        ? "Switch to light mode"
+                        : "Switch to dark mode"
+                    }
+                  >
+                    <i
+                      className={`fa-solid ${theme === "dark" ? "fa-sun" : "fa-moon"}`}
+                    />
+                    <span>{theme === "dark" ? "Light" : "Dark"}</span>
+                  </button>
+                  <button type="button" onClick={handleLogout}>
+                    <i className="fa-solid fa-right-from-bracket" />
+                    <span>Logout</span>
+                  </button>
                 </div>
-              )}
+              ) : null}
             </div>
           ) : (
-            <>
+            <div className="nav-auth-actions">
               <button
-                className={location.pathname === "/login" ? "active" : ""}
-                onClick={() => navigate("/login")}
+                type="button"
+                className={
+                  location.pathname === "/login"
+                    ? "button button-secondary active"
+                    : "button button-secondary"
+                }
+                onClick={() => visitRoute("/login")}
               >
                 Login
               </button>
-
               <button
-                className={location.pathname === "/register" ? "active" : ""}
-                onClick={() => navigate("/register")}
+                type="button"
+                className={
+                  location.pathname === "/register"
+                    ? "button button-primary active"
+                    : "button button-primary"
+                }
+                onClick={() => visitRoute("/register")}
               >
                 Sign Up
               </button>
-            </>
+            </div>
           )}
         </div>
       </div>
-    </div>
+    </header>
   );
 }
 
